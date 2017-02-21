@@ -9,7 +9,9 @@ from prettytable import PrettyTable
 import sys
 import re
 import json
+from requests.models import Response
 def check_keystone():
+    connection_timeout=0.9
     allowed_values={'identity':'','volume':'','volumev2':'','volumev3':'','image':'v1','glance':'','compute':'','neutron':'','network':''}
 
     internal_url={}
@@ -58,8 +60,18 @@ def check_keystone():
             table = PrettyTable(['Service', 'staus','e-time','reason','last_s_time','current_time','status_diff(in ms)','last_status','url'])
        	    for service_type in service_types:
                 result={} 
-       	        with eventlet.Timeout(1):
-     	 	     response= requests.get(service_url[service_type]["clean_url"],headers=headers, verify=False)
+                current_time=time.time() * 1000
+       	        with eventlet.Timeout(1):                   
+                     try:  
+        	       response= requests.get(service_url[service_type]["clean_url"],headers=headers,timeout=connection_timeout, verify=False)
+                     except:
+                       response = Response()
+                       response.status_code=501
+                       response.reason="Connection Error" 
+                       result["elapsed_time"]=(time.time() * 1000)- current_time
+
+           
+ 
                 if service_status[service_type]!=response.status_code: 
                    current_time=time.time() * 1000
                    service_status[service_type]=response.status_code
@@ -68,7 +80,8 @@ def check_keystone():
                    status_changed=True
                    result["service_name"]=service_type
                    result["status"]=response.status_code
-                   result["elapsed_time"]=response.elapsed.total_seconds()
+                   if response.status_code!=501: 
+                      result["elapsed_time"]=response.elapsed.total_seconds()
                    result["reason"]=response.reason
                    result["current_time"]=str(datetime.datetime.now())
                    result["last_time_in_ms"]=last_time=time.time() * 1000
