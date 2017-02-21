@@ -10,7 +10,8 @@ import sys
 import re
 import json
 def check_keystone():
-    allowed_values=['identity','volume','volumev2','volumev3','image','glance','compute','neutron','network']
+    allowed_values={'identity':'','volume':'','volumev2':'','volumev3':'','image':'v1','glance':'','compute':'','neutron':'','network':''}
+
     internal_url={}
     service_url={}
     service_types=[]
@@ -22,8 +23,8 @@ def check_keystone():
                              auth_url=os.environ['OS_AUTH_URL'])
 
     for service in keystone.auth_ref['serviceCatalog']:
-        print service['type']
         if service['type'] in allowed_values:
+            service_type=service['type'].strip()
             service_types.append(service["type"])
             service_status[service["type"]]="UNKNOW"
             results[service["type"]]={}
@@ -31,30 +32,36 @@ def check_keystone():
             try:
               clean_public_url= re.search(r'(.*)/v(.*)',clean_public_url).group(1)
             except: 
-               pass 
+               pass
+
+
+            if allowed_values[service_type]!='':
+                 clean_public_url=clean_public_url+ "/"+ allowed_values[service_type]
+
             
             service_url[service['type']]={"internal_url": service['endpoints'][0]['internalURL'],"admin_url": service['endpoints'][0]['adminURL'],"public_url": service['endpoints'][0]['publicURL'],"clean_url":clean_public_url}
 
             #print service_url[service['type']]["clean_url"]
 
 
-  # headers = {
-  #      'Content-Type': 'application/json',
-  #      'Accept': 'application/json',
-  #      'X-Auth-Token': keystone.auth_ref['token']['id'],
-  # }
+    headers = {
+         'Content-Type': 'application/json',
+         'Accept': 'application/json',
+         'X-Auth-Token': keystone.auth_ref['token']['id'],
+    }
 
    # if service_types:
    #     print "----------------------------------------"
     try:
        status_changed=True
        while True:
-            table = PrettyTable(['Service', 'staus','e-time','reason','last_s_time','current_time','last_status','url'])
+            table = PrettyTable(['Service', 'staus','e-time','reason','last_s_time','current_time','status_diff(in ms)','last_status','url'])
        	    for service_type in service_types:
                 result={} 
        	        with eventlet.Timeout(1):
-     	 	     response= requests.get(service_url[service_type]["clean_url"], verify=False)
+     	 	     response= requests.get(service_url[service_type]["clean_url"],headers=headers, verify=False)
                 if service_status[service_type]!=response.status_code: 
+                   current_time=time.time() * 1000
                    service_status[service_type]=response.status_code
                    if response.status_code==300:
                       service_url[service_type]["clean_url"]= process_multiplechoice(response.content)
@@ -64,19 +71,22 @@ def check_keystone():
                    result["elapsed_time"]=response.elapsed.total_seconds()
                    result["reason"]=response.reason
                    result["current_time"]=str(datetime.datetime.now())
-                   print response.headers
+                   result["last_time_in_ms"]=last_time=time.time() * 1000
+                   #print response.headers
                    if not results[service_type]:
                        result["last_success_time"]=str(datetime.datetime.now()) 
                        result["last_status"]="UNKNOW"
+                       result["diff"]=0.00 
                    else:
                        result["last_success_time"]=results[service_type]["last_success_time"]
                        result["last_status"]=results[service_type]["last_status"]
+                       result["diff"]=current_time - results[service_type]["last_time_in_ms"]
                    result["url"]=response.url
-                   table.add_row([result["service_name"],result["status"], result["elapsed_time"],result["reason"],result["last_success_time"],result["current_time"],result["last_status"],result['url']])
+                   table.add_row([result["service_name"],result["status"], result["elapsed_time"],result["reason"],result["last_success_time"],result["current_time"],result["diff"],result["last_status"],result['url']])
                    results[service_type]=result
                 else:
                    result=results[service_type]
-                   table.add_row([result["service_name"],result["status"], result["elapsed_time"],result["reason"],result["last_success_time"],result["current_time"],result["last_status"],result['url']])
+                   table.add_row([result["service_name"],result["status"], result["elapsed_time"],result["reason"],result["last_success_time"],result["current_time"],result["diff"],result["last_status"],result['url']])
                     
 
             if status_changed:
