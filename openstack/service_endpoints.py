@@ -14,8 +14,12 @@ def getServiceEndpoints():
         print service['type']
         base_url = service['endpoints'][0]['internalURL']
         admin_url = service['endpoints'][0]['adminURL']
+        public_url = service['endpoints'][0]['publicURL']
+
         print base_url
         print admin_url
+        print public_url
+
 
 
 

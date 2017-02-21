@@ -6,10 +6,13 @@ import datetime
 import time
 from time import sleep
 from prettytable import PrettyTable
+import sys
+import re
+import json
 def check_keystone():
-    allowed_values=['identity','volume','image','glance','compute','neutron','network']
+    allowed_values=['identity','volume','volumev2','volumev3','image','glance','compute','neutron','network']
     internal_url={}
-    admin_url={}
+    service_url={}
     service_types=[]
     service_status={}
     results={} 
@@ -24,50 +27,67 @@ def check_keystone():
             service_types.append(service["type"])
             service_status[service["type"]]="UNKNOW"
             results[service["type"]]={}
-            internal_url[service['type']] = service['endpoints'][0]['internalURL']
-            admin_url[service['type']] = service['endpoints'][0]['adminURL']
-    
-    
+            clean_public_url=service['endpoints'][0]['publicURL']
+            try:
+              clean_public_url= re.search(r'(.*)/v(.*)',clean_public_url).group(1)
+            except: 
+               pass 
+            
+            service_url[service['type']]={"internal_url": service['endpoints'][0]['internalURL'],"admin_url": service['endpoints'][0]['adminURL'],"public_url": service['endpoints'][0]['publicURL'],"clean_url":clean_public_url}
 
-    headers = {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-        'X-Auth-Token': keystone.auth_ref['token']['id'],
-    }
+            #print service_url[service['type']]["clean_url"]
 
-    if service_types:
-        print "----------------------------------------"
+
+  # headers = {
+  #      'Content-Type': 'application/json',
+  #      'Accept': 'application/json',
+  #      'X-Auth-Token': keystone.auth_ref['token']['id'],
+  # }
+
+   # if service_types:
+   #     print "----------------------------------------"
     try:
        status_changed=True
        while True:
-            table = PrettyTable(['Service', 'staus','e-time','reason','last_s_time','last_status'])
+            table = PrettyTable(['Service', 'staus','e-time','reason','last_s_time','current_time','last_status','url'])
        	    for service_type in service_types:
                 result={} 
        	        with eventlet.Timeout(1):
-   	     	 response= requests.get(admin_url[service_type])
-                 if service_status[service_type]!=response.status_code:
-                    service_status[service_type]=response.status_code
-                    status_changed=True
-                    result["service_name"]=service_type
-                    result["status"]=response.status_code
-                    result["elapsed_time"]=response.elapsed.total_seconds()
-                    result["reason"]=response.reason
-                    if not results[service_type]:
-                         result["last_success_time"]=str(datetime.datetime.now()) 
-                         result["last_status"]="UNKNOW"
-                    else:
-                        result["last_success_time"]=results[service_type].last_success_time
-                        result["last_status"]=results[service_type].last_status
-                    table.add_row([result["service_name"],result["status"], result["elapsed_time"],result["reason"],result["last_success_time"],result["last_status"]])
-                    results[service_type]=result
-                 else:
-                    result=results[service_type]
-                    table.add_row([result["service_name"],result["status"], result["elapsed_time"],result["reason"],result["last_success_time"],result["last_status"]])
+     	 	     response= requests.get(service_url[service_type]["clean_url"], verify=False)
+                if service_status[service_type]!=response.status_code: 
+                   service_status[service_type]=response.status_code
+                   if response.status_code==300:
+                      service_url[service_type]["clean_url"]= process_multiplechoice(response.content)
+                   status_changed=True
+                   result["service_name"]=service_type
+                   result["status"]=response.status_code
+                   result["elapsed_time"]=response.elapsed.total_seconds()
+                   result["reason"]=response.reason
+                   result["current_time"]=str(datetime.datetime.now())
+                   print response.headers
+                   if not results[service_type]:
+                       result["last_success_time"]=str(datetime.datetime.now()) 
+                       result["last_status"]="UNKNOW"
+                   else:
+                       result["last_success_time"]=results[service_type]["last_success_time"]
+                       result["last_status"]=results[service_type]["last_status"]
+                   result["url"]=response.url
+                   table.add_row([result["service_name"],result["status"], result["elapsed_time"],result["reason"],result["last_success_time"],result["current_time"],result["last_status"],result['url']])
+                   results[service_type]=result
+                else:
+                   result=results[service_type]
+                   table.add_row([result["service_name"],result["status"], result["elapsed_time"],result["reason"],result["last_success_time"],result["current_time"],result["last_status"],result['url']])
                     
 
             if status_changed:
+                 print "\n"
                  print table
+                 print "\n"
                  status_changed=False
+            else:   
+                sys.stdout.write(".")
+                sys.stdout.flush()
+ 
 	    sleep(0.10)
     except KeyboardInterrupt:
 	 sleep(5)
@@ -100,8 +120,27 @@ def check_keystone():
 
     #print requests.get(url,headers=headers)
 
+def process_multiplechoice(content):
+   #print content
+   url="no url"
+   jcontent=json.loads(content)
+   if "values" in content:
+       for status in  jcontent["versions"]["values"]:
+          if status["status"]=="stable":
+             for urls in status["links"]:
+                if urls["rel"]=="self":
+                   url=urls["href"]
+                   break
+   else:
+      for status in jcontent["versions"]:
+         if status["status"]=="CURRENT":
+            for urls in status["links"]:
+                if urls["rel"]=="self":   
+                   url=urls["href"]
+                   break
+   return url 
 
-
+ 
 def main():
    # args = get_args()
     check_keystone()
