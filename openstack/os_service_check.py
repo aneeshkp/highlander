@@ -11,8 +11,9 @@ import re
 import json
 from requests.models import Response
 def check_keystone():
-    connection_timeout=0.9
-    allowed_values={'identity':'','volume':'','volumev2':'','volumev3':'','image':'v1','glance':'','compute':'','neutron':'','network':''}
+    connection_timeout=1
+    INITIAL_STATUS = "UNKNOWN"
+    allowed_values={'identity':'tenants','volume':'/types','volumev2':'/backups/detail','volumev3':'backups/detail','image':'v2/images','glance':'','compute':'servers','neutron':'','network':'v2.0/networks'}
 
     internal_url={}
     service_url={}
@@ -28,11 +29,12 @@ def check_keystone():
         if service['type'] in allowed_values:
             service_type=service['type'].strip()
             service_types.append(service["type"])
-            service_status[service["type"]]="UNKNOW"
+            service_status[service["type"]]=INITIAL_STATUS
             results[service["type"]]={}
             clean_public_url=service['endpoints'][0]['publicURL']
             try:
-              clean_public_url= re.search(r'(.*)/v(.*)',clean_public_url).group(1)
+              #clean_public_url= re.search(r'(.*)/v(.*)',clean_public_url).group(1)
+               pass
             except: 
                pass
 
@@ -63,7 +65,7 @@ def check_keystone():
                 current_time=time.time() * 1000
        	        with eventlet.Timeout(1):                   
                      try:  
-        	       response= requests.get(service_url[service_type]["clean_url"],headers=headers,timeout=connection_timeout, verify=False)
+        	       response= requests.get(service_url[service_type]["clean_url"],headers=headers,timeout=connection_timeout, verify=False )
                      except:
                        response = Response()
                        response.status_code=501
@@ -72,7 +74,7 @@ def check_keystone():
 
            
  
-                if service_status[service_type]!=response.status_code: 
+                if service_status[service_type]!=response.status_code:
                    current_time=time.time() * 1000
                    service_status[service_type]=response.status_code
                    if response.status_code==300:
@@ -88,11 +90,11 @@ def check_keystone():
                    #print response.headers
                    if not results[service_type]:
                        result["last_success_time"]=str(datetime.datetime.now()) 
-                       result["last_status"]="UNKNOW"
+                       result["last_status"]=INITIAL_STATUS
                        result["diff"]=0.00 
                    else:
                        result["last_success_time"]=results[service_type]["last_success_time"]
-                       result["last_status"]=results[service_type]["last_status"]
+                       result["last_status"]=results[service_type]["status"]
                        result["diff"]=current_time - results[service_type]["last_time_in_ms"]
                    result["url"]=response.url
                    table.add_row([result["service_name"],result["status"], result["elapsed_time"],result["reason"],result["last_success_time"],result["current_time"],result["diff"],result["last_status"],result['url']])
@@ -115,6 +117,7 @@ def check_keystone():
     except KeyboardInterrupt:
 	 sleep(5)
 	 print 'interrupted!'
+         exit(1) 
                       
                 #print"Internal URL==> "+  internal_url[service_type]
                # response= requests.get(internal_url[service_type])
@@ -170,5 +173,8 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+   try: 
+      main()
+   except KeyboardInterrupt:
+      exit(0) 
 

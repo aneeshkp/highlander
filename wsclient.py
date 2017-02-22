@@ -21,11 +21,15 @@ global action_type
 
 buff = []
 global last_data
+#ON MESSAGE- PRINT ONLY IF HOSTNAME or STATUS Changes
 def on_message(ws, message):
     global buff
     global last_data
     global messagecount
     global action_type
+    results={}
+    server_status="UNKNOW"
+    
     #if pong operation then diff = current recived  time - last Client recv time
     #if ping operation then diff = Current Server sent time - Client Recv time  
     data=json.loads(message)
@@ -84,7 +88,7 @@ def reconnect():
        sys.exit(1)
  
 
-
+#Acton can be ping or pong as set in configuration file
 def connect():
     global messagecount
     global ws_url
@@ -112,16 +116,16 @@ def connect():
       while ws.sock.connected and action_type=="ping":
         sno= sno+1
         sleep(0.10)
-        data={"no":sno,"time_s":  time.time() * 1000, "time_r":0 ,"s_time_r":0 ,"s_time_s":0 ,"diff":0 ,"hostname":'' }
+        data={"no":sno,"time_s":  time.time() * 1000, "time_r":0 ,"s_time_r":0 ,"s_time_s":0 ,"diff":0 ,"hostname":'',"status":"UNKNOWN" }
         ws.send(json.dumps(data))
 
  
 
-
+#ON OPEN SEDN JSON DATA with -time client_recived_0,server_time_sent=0,
 def on_open(ws):
     #print "***********************CONNECTION OPEN************************"
     #print "sending message time " +  str(datetime.datetime.now())
-    data={"no":1,"time_s": str(datetime.datetime.now()), "time_r":0 ,"s_time_r":0 ,"s_time_s":0 ,"diff":0 ,"hostname":'' }
+    data={"no":1,"time_s": str(datetime.datetime.now()), "time_r":0 ,"s_time_r":0 ,"s_time_s":0 ,"diff":0 ,"hostname":'',"status":"UNKNOWN" }
     json_data=json.dumps(data)
     ws.send(json_data)
 
