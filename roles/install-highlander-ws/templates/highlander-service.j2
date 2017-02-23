@@ -1,0 +1,12 @@
+[Unit]
+  Description=highlander
+  [Service]
+  ExecStart=/usr/bin/node  {{ansible_env.HOME}}/highlander/server.js
+  Restart=always
+  RestartSec=10                       # Restart service after 10 seconds if node service crashes
+  StandardOutput=syslog               # Output to syslog
+  StandardError=syslog                # Output to syslog
+  SyslogIdentifier=nodejs-highlander-server
+  Environment=NODE_ENV=production
+  [Install]
+  WantedBy=multi-user.target

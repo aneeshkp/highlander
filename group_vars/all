@@ -1,0 +1,4 @@
+highlander_repo: http://github.com/aneeshkp/highlander
+overcloudrc: ~/overcloudrc
+web_scoket_port: 3005
+haproxy_config: /etc/haproxy/haproxy.cfg

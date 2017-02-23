@@ -1,0 +1,35 @@
+---
+- hosts: localhost 
+  gather_facts: False
+
+
+  pre_tasks:
+    - name : store controller host variables
+      shell: >
+        source ~/stackrc;
+        nova list | grep controller | awk '{print $4  $12}' | sed  's/ctlplane=/.localadmin /g'
+      register: controller_hostname_list
+
+    - name : store controller host variables
+      shell: >
+        source ~/stackrc;
+        nova list | grep compute | awk '{print $4  $12}' | sed  's/ctlplane=/.localadmin /g'
+      register: compute_hostname_list
+
+    - name : get contoller ip
+      shell: >
+        source ~/stackrc;
+        nova list | grep controller | awk '{print $12}' | cut -d "=" -f 2
+      register: controller_list
+
+    - name: add controller nodes to controllers host group
+      add_host:
+        name: "{{item}}" 
+        groups: controller
+      with_items: "{{controller_list.stdout_lines}}"
+
+
+    - debug: var=groups['controller']    
+  
+- hosts: controller
+  gather_facts: False

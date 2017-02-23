@@ -1,0 +1,60 @@
+---
+
+- name: Install nodejs script
+  shell: curl  --location https://rpm.nodesource.com/setup_7.x | bash
+  become: true
+
+- name: install nodejs 
+  action: "{{ ansible_pkg_mgr }} name={{ item }} state=present"
+  with_items:
+   - nodejs
+  become: true
+
+- name: copy service file
+  template: src=highlander-service.j2 dest=/etc/systemd/system/highlander.service  mode=0644 seuser=unconfined_u force=yes
+  become: true
+
+- debug: var=hostvars['localhost']['controller_hostname_list']['stdout_lines']
+
+- name : get haproxy url 
+  shell : >
+    grep -m1 "bind " {{haproxy_config}} | awk '{print $2}'| cut -d ':' -f 1
+  register: haproxy_ip_address
+  become: true  
+
+- name: remove highlander block in /tmp/haproxy/haproxy.cfg
+  blockinfile:
+    dest: "{{haproxy_config}}"
+    marker: '# {mark} highlander marker'
+    content: ""
+    state: absent
+  become: true
+
+- name: insert/update vitrage block in /tmp/haproxy/haproxy.cfg
+  blockinfile:
+    dest: "{{haproxy_config}}"
+    marker: '# {mark} highlander marker'
+    block: |
+      listen highlander
+      bind  {{haproxy_ip_address.stdout}}:3333 transparent
+      option  http-server-close
+      option http-pretend-keepalive
+      balance roundrobin
+      mode http
+  become: true
+
+- name: insert/update vitrage block in /tmp/haproxy/haproxy.cfg
+  blockinfile:
+    dest: "{{haproxy_config}}"
+    marker: "#DELETE#"
+    insertbefore : '# END highlander marker'
+    block: |
+       #DELETE#    
+       server {{ hostvars[item]['ansible_hostname'] }} {{hostvars[item]['ansible_eth1']['ipv4']['address']}}:3333 check 
+  with_items: "{{groups['controller'}}"
+  become: true
+
+- name: Remove markers ##DELETE##
+  shell: >
+    sed -i  '/#DELETE#/d' "{{haproxy_config}}"
+  become: true 

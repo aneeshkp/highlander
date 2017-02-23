@@ -1,0 +1,7 @@
+---
+
+- name: install_ highlander_ws
+  hosts: controller
+  remote_user: root 
+  roles:
+    - install-highlander-ws 
