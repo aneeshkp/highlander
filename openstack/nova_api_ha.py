@@ -97,13 +97,13 @@ def nova_deploy_instace():
             try:
                  nova.reset_timings()
 		 instance = nova.servers.get(instance_id)
-                 pprint(instance)
                  if instance.status!=status:
                     result["invoked_time"]=str(datetime.datetime.now())
                     status=instance.status
                     result["action"]="GET_STATUS"
                     result["status"]=status
-                    result["fault"]=get_fault(instance.fault)
+                    if hasattr(instance,"fault"):   
+                    	result["fault"]=get_fault(instance.fault)
                     result["time"] =  getTimings(nova.get_timings())
                     results.append(result)
             except Exception as err:
@@ -122,7 +122,7 @@ def nova_deploy_instace():
     results.append(result)
    
     print_result(results)
-    index=1
+#    index=1
 
 
 
