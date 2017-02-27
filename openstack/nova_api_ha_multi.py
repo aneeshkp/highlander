@@ -1,7 +1,9 @@
 #!/usr/bin/enlockv python
 import os
 import multiprocessing as mp
+from multiprocessing.dummy import Pool as ThreadPool
 from multiprocessing import  Lock,Manager
+import threading
 import time
 import datetime
 import sys
@@ -17,6 +19,19 @@ import signal
 import copy
 import random
 import string
+from functools import partial
+
+global results
+mylock=Lock()
+
+
+def get_nova_creds():
+    d = {}
+    d['username'] = os.environ['OS_USERNAME']
+    d['api_key'] = os.environ['OS_PASSWORD']
+    d['auth_url'] = os.environ['OS_AUTH_URL']
+    d['project_id'] = os.environ['OS_TENANT_NAME']
+    return d
 
 
 
@@ -42,7 +57,7 @@ def init():
 
   #get keystone session
   keystone=client.Client(session=sess)
-#print keystone.tenants.list()
+  #print keystone.tenants.list()
 
   nova  = getNova(keystone.session)
   #nova = novaClient.Client("2", keystone.session,timings=True,timeout=1)
@@ -68,106 +83,131 @@ def init():
   return keystone.session,image,flavor,nics
 
 #get Nova object
-def getNova(session):
-    nova = None
+def getNova(session=None):
     try:
-       nova = novaClient.Client("2",session=session,timings=True,timeout=1)
+       if session==None:
+         return novaClient.Client("2",timings=True,timeout=1,**get_nova_creds()) 
+       else:
+        return  novaClient.Client("2",session=session,timings=True,timeout=1)
     except Exception as err:
        print "Error returning nova object %s",err
      
-    return nova 
+    return None 
+
 
 
 #get status of the object 
-def checkstatus( instance_id,status,results):
-    nova =novaClient.Client("2",os.environ['OS_USERNAME'], os.environ['OS_PASSWORD'], "admin", os.environ["OS_AUTH_URL"], service_type="compute")
-    print"Get Nova instancefor checking status"
-    #nova=getNova(session)
+def checkstatus( instance_id,status,result):
+    status_results=[]
+    status_results.append(result)
+    #nova =novaClient.Client("2",os.environ['OS_USERNAME'], os.environ['OS_PASSWORD'], "admin", os.environ["OS_AUTH_URL"], service_type="compute")
+    print"Get Nova instancefor checking status" + status
+    nova=getNova()
     print "Checking status for "+instance_id
-    def delete_instance(nova,instance_id):
-          print  "Deleteing "+ instance_id
-	  try:
-	    result=initResult()
-	    result["invoked_time"]=str(datetime.datetime.now())
-	    result["action"]="DELETE"
-	    nova.reset_timings()
-	    nova.servers.delete(instance_id)
-	    result["status"]="Deleteing"
-	    result["time"]= getTimings(nova.get_timings())
-	  except Exception as err:
-	    result["error_state"]=err
-	  return result
+    #time.sleep(1)
+    status_result=initResult()
+        # Retrieve the instance again so the status field updates
+    while status=='BUILD':
+      try:
+        nova.reset_timings()
+        instance = nova.servers.get(instance_id)
+        if instance.status!=status:
+            status_result["invoked_time"]=str(datetime.datetime.now())
+            status=instance.status
+            status_result["action"]="GET_STATUS"
+            status_result["status"]=status
+            if hasattr(instance,"fault"):
+                status_result["fault"]=get_fault(instance.fault)
+                status_result["time"] =  getTimings(nova.get_timings())
+      except Exception as err:
+        status_result["CHECK_STATUS"]
+        status_result["error_state"]=err
+        status='ERROR'
 
-    while status == 'BUILD':
-            time.sleep(1)
-            result=initResult()
-            # Retrieve the instance again so the status field updates
-            try:
-                 nova.reset_timings()
-                 instance = nova.servers.get(instance_id)
-                 if instance.status!=status:
-                    result["invoked_time"]=str(datetime.datetime.now())
-                    status=instance.status
-                    result["action"]="GET_STATUS"
-                    result["status"]=status
-                    if hasattr(instance,"fault"):
-                        result["fault"]=get_fault(instance.fault)
-                    result["time"] =  getTimings(nova.get_timings())
-                    results.append(result)
-            except Exception as err:
-                  result["CHECK_STATUS"]
-                  result["error_state"]=err
-                  results.append(result)
+    status_results.append(status_result)
     print "Status check completed"
+    print status_results
     #delete instance
     print  "Deleteing "+ instance_id
     try:
-       result=initResult()
-       result["invoked_time"]=str(datetime.datetime.now())
-       result["action"]="DELETE"
+       delete_result=initResult()
+       delete_result["invoked_time"]=str(datetime.datetime.now())
+       delete_result["action"]="DELETE"
        nova.reset_timings()
        nova.servers.delete(instance_id)
-       result["status"]="Deleteing"
-       result["time"]= getTimings(nova.get_timings())
+       delete_result["status"]="Deleteing"
+       delete_result["time"]= getTimings(nova.get_timings())
     except Exception as err:
-       result["action"]="DELETE"
-       result["error_state"]=err
+       print "error "
+       delete_result["action"]="DELETE"
+       delete_result["error_state"]=err
  
-    results.append(result)
-    return results    
+    status_results.append(delete_result)
+    print "After deleteing"
+    print status_results
+    return status_results    
 
-def init_worker():
+def init_worker(l):
     signal.signal(signal.SIGINT, signal.SIG_IGN)
+    global lock
+    lock = l
+
 
 
 def id_generator(size=6, chars=string.ascii_uppercase + string.digits):
       return ''.join(random.choice(chars) for _ in range(size))
 
+def process_results(r):
+  global results
+  global mylock
+  mylock.acquire()
+  print r
+  #for rr in r:
+  results.append(r)
+  mylock.release()
+
+
+def abortable_worker(func,*args,**kwargs):
+  timeout=kwargs.get("timeout",None)
+  instance_is=kwargs.get("instance_id",None)
+  main_result=kwargs.get("result",None)
+  timeout_results=[]
+  timeout_results.append(main_result)
+  p=ThreadPool(1)
+  timeout_result=initResult()
+  res=p.apply_async(func,args=args)
+  try:
+     out =res.get(timeout) #wait for function to complete
+     return out   
+  except mp.TimeoutError:
+     timeout_result["id"]=instance_id
+     timeout_result["status"]="Timeout checking status after 20 secs"
+     timeout_results.append(timeout_result)
+     #process_results(timeout_results)
+     p.terminate()
+     return timeout_results
+
 #deploy instance    
 def nova_deploy_instance(session,image,flavor,nics):
   index=0
   nova =getNova(session)
-  l = mp.Lock()
+  #l = mp.Lock()
   instance_count=0
   manager=Manager()
-  results= [] 
+  #global results
   instance_name="HIGHLANDER_"+id_generator()
 
-  def process_results(r):
-     # global lock 
-     # lock.acquire()
+  def process_results_l(r):
+     global results
+     lock.acquire()
      for rr in r:
-       print rr
        results.append(rr)
-     # lock.release() 
+     lock.release() 
       
-  def initLock(l):
-    global lock
-    lock = l
 
   # pool=mp.Pool(initializer=initLock,initargs=(l,))
-  pool=mp.Pool(10, init_worker)
-
+  l = Lock()
+  pool=mp.Pool(processes=10, initializer=init_worker,initargs=(l,))
   print "Starting to deploy instance"
   while index==0:
     instance_count=instance_count+1
@@ -199,36 +239,42 @@ def nova_deploy_instance(session,image,flavor,nics):
         #results.append(result) 
         #exit(0)
         print "sending thread to check status..."
-        copy_results=copy.deepcopy(instance_results)
-        pool.apply_async(checkstatus ,args=( instance_id,status,instance_results,),callback=process_results)
+        copy_result=copy.deepcopy(result)
+        #print copy_result
+        #results.append(checkstatus(instance_id,status,copy_result))
+        abortable_func=partial(abortable_worker,checkstatus,result=copy_result,instance_id=instance_id,timeout=20)
+        #abortable_func(instance_id,status,copy_result)
+        pool.apply_async(abortable_func ,args=( instance_id,status,copy_result,),callback=process_results)
         time.sleep(0.200)
     #if the status is Not Build, delete 
     except KeyboardInterrupt:
-         print "*******************************"
-         print "You EVIL bastard!"
-         print "*******************************"   
-         index=1
-         print "Exiting........"
-         # pool.close
-         #pool.terminate()
-         print "pool terminated... waiting to join"
-         #pool.join()
-         print "printing results"
+        print "*******************************"
+        print "You EVIL bastard!"
+        print "*******************************"   
+        index=1
+        print "Exiting........"
+        time.sleep(5)
+        pool.close()
+        #pool.terminate()
+        print "pool terminated... waiting to join"
+        pool.join()
+        print "printing results"
          #print_result(results)
          #time.sleep(5)
          #exit(1)
     except Exception as err:
-      print "Exception occured %s",err
-      result["error_state"]=err
-      results.append(result)
+        print "Exception occured %s",err
+        result["error_state"]=err
+        results.append(result)
      #print_result(results)
      #Delete instance and print
      #result=delete_instance(nova,instance_id)
      #results.append(result)
 
-  pool.close()
-  pool.join() 
+  #pool.close()
+  #pool.join() 
   print "\nFinally, here are the results:"
+  print results
   print_result(results)
 #    index=1
 
@@ -271,20 +317,24 @@ def print_result(results):
   print "Printing results"
   print results
   table = PrettyTable(['id','name','action', 'status','time','error_state','Invoked_time','fault'],encoding="UTF-8")
-  for result in results:
-     table.add_row([result['id'],result['name'],result["action"],result["status"],result['time'], result["error_state"],result['invoked_time'],result['fault']])
+  for result_1 in results:
+     for result in result_1:
+         table.add_row([result['id'],result['name'],result["action"],result["status"],result['time'], result["error_state"],result['invoked_time'],result['fault']])
   
   print table
  
  
 if __name__ == '__main__':
-   try:
-      nova =novaClient.Client("2",os.environ['OS_USERNAME'], os.environ['OS_PASSWORD'], "admin", os.environ["OS_AUTH_URL"], service_type="compute")
+      global results 
+  #try:
+      no_of_instance=10
       session,image,flavor,nics=init()
       print session
       print image
+      results=[]
       nova_deploy_instance(session,image,flavor,nics)
-   except KeyboardInterrupt:
-      exit(0)
+  #except Exception:
+  #    exit(0)
+
 
 
