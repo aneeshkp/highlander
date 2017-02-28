@@ -21,6 +21,13 @@ def getServiceEndpoints():
         print public_url
 
 
+    headers = {'Content-Type': 'application/json','Accept': 'application/json',
+         'X-Auth-Token': keystone.auth_ref['token']['id'] }
+   
+    print headers
+
+
+
 
 
 def main():

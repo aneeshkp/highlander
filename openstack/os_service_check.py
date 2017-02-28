@@ -13,7 +13,7 @@ from requests.models import Response
 def check_keystone():
     connection_timeout=2
     INITIAL_STATUS = "UNKNOWN"
-    allowed_values={'identity':'tenants','volume':'/types','volumev2':'/backups/detail','volumev3':'backups/detail','image':'v2/images','glance':'','compute':'servers','neutron':'','network':'v2.0/networks'}
+    allowed_values={'identity':'tenants','volume':'types','volumev2':'backups/detail','volumev3':'backups/detail','image':'v2/images','glance':'','compute':'servers','neutron':'','network':'v2.0/networks','orchestration': 'stacks'}
 
     internal_url={}
     service_url={}
@@ -33,7 +33,7 @@ def check_keystone():
             results[service["type"]]={}
             clean_public_url=service['endpoints'][0]['publicURL']
             try:
-              #clean_public_url= re.search(r'(.*)/v(.*)',clean_public_url).group(1)
+               #clean_public_url= re.search(r'(.*)/v(.*)',clean_public_url).group(1)
                pass
             except: 
                pass

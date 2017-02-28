@@ -1,0 +1,10 @@
+heat_template_version: 2013-05-23
+description: Simple template to deploy a single compute instance
+resources:
+  instance:
+    type: OS::Nova::Server
+    properties:
+      flavor: cirros.1 
+      image: cirros-0.3.4 
+      networks:
+        - network: default 

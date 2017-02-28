@@ -1,5 +1,6 @@
 #!/usr/bin/enlockv python
 import os
+import requests
 import multiprocessing as mp
 from multiprocessing.dummy import Pool as ThreadPool
 from multiprocessing import  Lock,Manager
@@ -24,6 +25,7 @@ from functools import partial
 global results
 global spawned_instances
 global spawned_instance_ids
+global TIMEOUT
 mylock=Lock()
 
 
@@ -88,29 +90,31 @@ def init():
 def getNova(session=None):
     try:
        if session==None:
-         return novaClient.Client("2",timings=True,timeout=1,**get_nova_creds()) 
+         return novaClient.Client("2",timings=True,timeout=600,**get_nova_creds()) 
        else:
-        return  novaClient.Client("2",session=session,timings=True,timeout=1)
+        return  novaClient.Client("2",session=session,timings=True,timeout=600)
     except Exception as err:
        print "Error returning nova object %s",err
      
     return None 
 
 
-
 #get status of the object 
 def checkstatus( instance_id,status,result):
+    start_time=time.time() * 1000
     status_results=[]
     status_results.append(result)
     #nova =novaClient.Client("2",os.environ['OS_USERNAME'], os.environ['OS_PASSWORD'], "admin", os.environ["OS_AUTH_URL"], service_type="compute")
-    print"Get Nova instancefor checking status" + status
-    nova=getNova()
+    #print"Get Nova instancefor checking status" + status
+    nova=None
     print "Checking status for "+instance_id
     #time.sleep(1)
     status_result=initResult()
         # Retrieve the instance again so the status field updates
     while status=='BUILD':
       try:
+        if nova==None:
+            nova =getNova()
         nova.reset_timings()
         instance = nova.servers.get(instance_id)
         if instance.status!=status:
@@ -122,30 +126,17 @@ def checkstatus( instance_id,status,result):
                 status_result["fault"]=get_fault(instance.fault)
             status_result["time"] =  getTimings(nova.get_timings())
       except Exception as err:
-        status_result["CHECK_STATUS"]
+        print "Exception occured inside check status"
+        #if isinstance(err,novaclient.exceptions.ClientException):
+        #   print "It's NovaClient Exception ... reseting"
+        nova =None
+       
         status_result["error_state"]=err
         status='ERROR'
-
+    status_result["status_time_diff"]=(time.time() * 1000) - start_time
     status_results.append(status_result)
-    print "Status check completed"
+    print "Complete checking status for "+instance_id
     print status_results
-    #delete instance
-    #try:
-    #   delete_result=initResult()
-    #   delete_result["invoked_time"]=str(datetime.datetime.now())
-    #   delete_result["action"]="DELETE"
-    #   nova.reset_timings()
-    #   nova.servers.delete(instance_id)
-    #   delete_result["status"]="Deleteing"
-    #   delete_result["time"]= getTimings(nova.get_timings())
-    #except Exception as err:
-    #   print "error "
-    #   delete_result["action"]="DELETE"
-    #   delete_result["error_state"]=err
- 
-    #status_results.append(delete_result)
-    #print "After deleteing"
-    #print status_results
     return status_results    
 
 
@@ -165,7 +156,6 @@ def delete_deployed_instances():
        delete_result["status"]="Deleteing"
        delete_result["time"]= getTimings(nova.get_timings())
      except Exception as err:
-       print "error "
        delete_result["action"]="DELETE"
        delete_result["error_state"]=err
 
@@ -183,11 +173,9 @@ def id_generator(size=6, chars=string.ascii_uppercase + string.digits):
       return ''.join(random.choice(chars) for _ in range(size))
 
 def process_results(r):
-  global results
   global mylock
   mylock.acquire()
-  print r
-  #for rr in r:
+  global results 
   results.append(r)
   mylock.release()
 
@@ -205,23 +193,28 @@ def abortable_worker(func,*args,**kwargs):
   try:
      out =res.get(timeout) #wait for function to complete
      return out   
-  except mp.TimeoutError:
+  except (mp.TimeoutError,Exception) as e:
+     print "Timeout"
+     print e
      timeout_result["id"]=instance_id
      timeout_result["name"]=instance_name
      timeout_result["action"]="GET_STATUS"
-     timeout_result["status"]="Timeout checking status after 20 secs"
+     timeout_result["status"]="Timeout checking status after X secs"
      timeout_results.append(timeout_result)
      #process_results(timeout_results)
      print "terminating due to timeout"
-     p.terminate()
-     print "Printing timeout result ********************"
      print timeout_results
+     p.terminate()
+     #print "Printing timeout result ********************"
+     #print timeout_results
      return timeout_results
 
 #deploy instance    
-def nova_deploy_instance(session,image,flavor,nics):
+def nova_deploy_instance(session,image,flavor,nics,no_of_instance=999,clean_up=True):
+  userInterrupted=False
   index=0
   nova =getNova(session)
+  global TIMEOUT
   #l = mp.Lock()
   instance_count=0
   global spawned_instances
@@ -231,22 +224,14 @@ def nova_deploy_instance(session,image,flavor,nics):
   #global results
   instance_name="HIGHLANDER_"+id_generator()
 
-  def process_results_l(r):
-     global results
-     lock.acquire()
-     for rr in r:
-       results.append(rr)
-     lock.release() 
-      
-
   # pool=mp.Pool(initializer=initLock,initargs=(l,))
   l = Lock()
   pool=mp.Pool(processes=10, initializer=init_worker,initargs=(l,))
   print "Starting to deploy instance"
   spawned_instances={}
   spawned_instance_ids=[]
-  while index==0:
-    instance_count=instance_count+1
+  while instance_count<=no_of_instance:
+
     try:
        # Starting nova instance
         instance_results=[]
@@ -254,14 +239,24 @@ def nova_deploy_instance(session,image,flavor,nics):
         nova.reset_timings()     
         result["action"]="Create"
         result["invoked_time"]=str(datetime.datetime.now())
-        print "Starting to deploy instance %s", instance_name + str(instance_count)
-
-	instance = nova.servers.create(name=instance_name + str(instance_count), image=image,
+        print "Starting to deploy instance %s", instance_name +"_"+ str(instance_count)
+      
+        start_time=time.time() * 1000
+        instance=None
+        try:
+           instance = nova.servers.create(name=instance_name +"_" + str(instance_count), image=image,
                  flavor=flavor,nics=nics)
+        except KeyboardInterrupt:
+           raise KeyboardInterrupt()
+        except Exception as Err:
+           print "Exception occured while deploying instance... looping back",Err
+           continue
 
+        instance_count=instance_count+1
+        result["status_time_diff"]=(time.time() * 1000) - start_time
         instance_id=instance.id
+        spawned_instances[instance_id]=instance_name  +"_" + str(instance_count)
         spawned_instance_ids.append(instance_id)
-        spawned_instances[instance_id]=instance_name + str(instance_count)
 	result["time"]= getTimings(nova.get_timings())
         result['id']=instance_id
         result['name']=instance.name
@@ -271,25 +266,26 @@ def nova_deploy_instance(session,image,flavor,nics):
         result["status"]=status
         if status=="ERROR":
            result["error_state"]=instance.error 
-           instance_results.append(result) 
-           print_result(instance_results)
-           exit(0) #do you wan to exit here or continue deploying next
+           print "**************** UNKNOW ERROR ON CREATE ***********************"
+           print result
+           #print_result(instance_results)
+           #exit(0) #do you wan to exit here or continue deploying next
         #results.append(result) 
         #exit(0)
-        print "sending thread to check status..."
-        copy_result=copy.deepcopy(result)
-        #print copy_result
-        #results.append(checkstatus(instance_id,status,copy_result))
-        abortable_func=partial(abortable_worker,checkstatus,result=copy_result,instance_name=(instance_name + str(instance_count)),instance_id=instance_id,timeout=20)
-        #abortable_func(instance_id,status,copy_result)
-        pool.apply_async(abortable_func ,args=( instance_id,status,copy_result,),callback=process_results)
-        time.sleep(0.200)
+        else:
+          print "sending thread to check status..."
+          copy_result=copy.deepcopy(result)
+          abortable_func=partial(abortable_worker,checkstatus,result=copy_result,instance_name=(instance_name + str(instance_count)),instance_id=instance_id,timeout=TIMEOUT)
+          #abortable_func(instance_id,status,copy_result)
+          pool.apply_async(abortable_func ,args=( instance_id,status,copy_result,),callback=process_results)
+          time.sleep(0.200)
     #if the status is Not Build, delete 
     except KeyboardInterrupt:
+        userInterrupted=True
         print "*******************************"
         print "You EVIL bastard!"
         print "*******************************"   
-        index=1
+        instance_count =no_of_instance+1
         print "Exiting........"
         time.sleep(5)
         pool.close()
@@ -301,30 +297,32 @@ def nova_deploy_instance(session,image,flavor,nics):
          #time.sleep(5)
          #exit(1)
     except Exception as err:
-        print "Exception occured %s",err
+        #print "Exception occured %s",err
         result["error_state"]=err
         results.append(result)
      #print_result(results)
      #Delete instance and print
      #result=delete_instance(nova,instance_id)
      #results.append(result)
-
-  #pool.close()
-  #pool.join() 
+  if userInterrupted==False:
+     time.sleep(5)
+     pool.close()
+     pool.join() 
   print "\nFinally, here are the results:"
  #print results
   print "spawned instances"
   for i in spawned_instances:
     print i
+  print "******** printing results**************************"
+  print results
   print_result(results)
-  print "deleteing instances"
-  delete_results=[]
-  delete_results.append(delete_deployed_instances())
-  print "delete resyults"
-  print delete_results
-  print_result(delete_results)
-
-#    index=1
+  if clean_up==True:
+      print "deleteing instances"
+      delete_results=[]
+      delete_results.append(delete_deployed_instances())
+      print "***************delete results****"
+      print delete_results
+      print_result(delete_results)
 
 
 
@@ -358,29 +356,37 @@ def getTimings(timings):
    return return_timings
    
 def initResult():
-    return {"id":'',"name":'',"action":'',"status":'',"time":'',"error_state":'',"invoked_time":'',"fault":''}
+    return {"id":'',"name":'',"action":'',"status":'',"time":'',"error_state":'',"invoked_time":'',"fault":'',"status_time_diff":0}
 
 
 def print_result(results):
   print "Printing results"
   print results
-  table = PrettyTable(['id','name','action', 'status','time','error_state','Invoked_time','fault'],encoding="UTF-8")
+  table = PrettyTable(['id','name','action', 'status','time','error_state','Invoked_time','fault','status_time_diff'],encoding="UTF-8")
   for result_1 in results:
      for result in result_1:
-         table.add_row([result['id'],result['name'],result["action"],result["status"],result['time'], result["error_state"],result['invoked_time'],result['fault']])
+         try:
+            table.add_row([result['id'],result['name'],result["action"],result["status"],result['time'], result["error_state"],result['invoked_time'],result['fault'],result['status_time_diff']])
+         except:
+            print "failed table"
+            print result
   
   print table
  
  
 if __name__ == '__main__':
-      global results 
+      global results
+      global TIMEOUT 
   #try:
-      no_of_instance=10
+      #-1 for unlimted
+      
+      TIMEOUT=600
       session,image,flavor,nics=init()
       print session
       print image
       results=[]
-      nova_deploy_instance(session,image,flavor,nics)
+      #999 for unlimited
+      nova_deploy_instance(session,image,flavor,nics,5,False)
   #except Exception:
   #    exit(0)
 
