@@ -69,15 +69,15 @@ def abortable_worker(func,*args,**kwargs):
            return out
         except mp.TimeoutError as e:
            print "Timeout"
-           timeout_result["id"]=instance_id
-           timeout_result["name"]=instance_name
-           timeout_result["action"]="GET_STATUS"
-           timeout_result["status"]="Timeout checking status after X secs"
-           timeout_results.append(timeout_result)
-           print "terminating due to timeout"
-           print timeout_results
-           p.terminate()
-           return timeout_results
+        timeout_result["id"]=instance_id
+        timeout_result["name"]=instance_name
+        timeout_result["action"]="GET_STATUS"
+        timeout_result["status"]="Timeout checking status after X secs"
+        timeout_results.append(timeout_result)
+        print "terminating due to timeout"
+        print timeout_results
+        p.terminate()
+        return timeout_results
 
 #method to check status of the instance
 def checkstatus(instance_id,status,result):
@@ -105,13 +105,15 @@ def checkstatus(instance_id,status,result):
              status_result["status"]=status
              if hasattr(instance,"fault"):
                  status_result["fault"]=deployService.get_fault(instance.fault)
-                 status_result["time"] =  deployeService.getTimings(nova.get_timings())
-                 status_result["error_state"]=""
+             #end if  
+             status_result["time"] =  deployService.getTimings(nova.get_timings())
+             status_result["error_state"]=""
       except Exception as err:
-        print "Exception occured inside check statu ... continue"
+        print "Exception occured inside check status... continue to check again"
+        print err
         nova =None
         status_result["error_state"]= "ERROR"
-            #status='ERROR'
+      #end except
     status_result["status_time_diff"]=(time.time() * 1000) - start_time
     status_results.append(status_result)
     print "Complete checking status for "+instance_id
@@ -137,7 +139,7 @@ class DeployInstances():
         self._nics=None
         self._session=None
         
-    
+     #get credential information  for environment file
      def __get_nova_creds(self):
        d = {}
        d['username'] = os.environ['OS_USERNAME']
@@ -146,6 +148,7 @@ class DeployInstances():
        d['project_id'] = os.environ['OS_TENANT_NAME']
        return d
 
+     # Initlaize and check if images ,flavor and networks are avialble
      def init(self):
 
 
@@ -199,7 +202,7 @@ class DeployInstances():
      
          return None 
 
-
+     #delete instances at the end, if the option is selected to clean up
      def delete_deployed_instances(self):
           nova=self.getNova()
           deleted_results=[]
@@ -220,15 +223,17 @@ class DeployInstances():
 
             deleted_results.append(delete_result)
             return deleted_results 
-
+     
+     #Initialize worker
      def init_worker(self):
             signal.signal(signal.SIGINT, signal.SIG_IGN)
 
 
-
+     #Auto generate
      def id_generator(self,size=6, chars=string.ascii_uppercase + string.digits):
           return ''.join(random.choice(chars) for _ in range(size))
-
+     
+     #Process instance result in threaded fashion
      def process_instance_results(self,r):
            self.mylock.acquire()
            self.results.append(r)
@@ -236,17 +241,15 @@ class DeployInstances():
 
         #deploy instance    
      def nova_deploy_instance(self,no_of_instance=999,clean_up=True):
+
           userInterrupted=False
           index=0
           nova =self.getNova(session)
           instance_count=0
-
           manager=Manager()
-          #global results
+
           instance_name="HIGHLANDER_"+self.id_generator()
 
-          # pool=mp.Pool(initializer=initLock,initargs=(l,))
-         # l = Lock()
           pool=mp.Pool(processes=10, initializer=self.init_worker,initargs=())
           print "Starting to deploy instance"
           while instance_count<=no_of_instance:
@@ -269,7 +272,9 @@ class DeployInstances():
                 except KeyboardInterrupt:
                    raise KeyboardInterrupt()
                 except Exception as Err:
-                   print "Exception occured while deploying instance... looping back",Err
+                   print "\nException occured while deploying instance... looping back",Err
+                   print str(datetime.date.now())
+                   print "\n-----------------------------------------------------\n"
                    continue
 
                 instance_count=instance_count+1
@@ -281,17 +286,12 @@ class DeployInstances():
                 result['id']=instance_id
                 result['name']=instance.name
                 nova.reset_timings()
-        # Poll at 2?? second intervals, until the status is no longer 'BUILD' or need to decide when to stop '' till it is running?
             	status = instance.status
                 result["status"]=status
                 if status=="ERROR":
                    result["error_state"]=instance.error 
                    print "**************** UNKNOW ERROR ON CREATE ***********************"
                    print result
-                   #print_result(instance_results)
-                   #exit(0) #do you wan to exit here or continue deploying next
-                #results.append(result) 
-                #exit(0)
                 else:
                     print "sending thread to check status..."
                     copy_result=copy.deepcopy(result)
@@ -299,12 +299,12 @@ class DeployInstances():
                                   abortable_worker,checkstatus,result=copy_result,
                                   instance_name=(instance_name + str(instance_count)),
                                   instance_id=instance_id,timeout=self.TIMEOUT)
-          #abortable_func(instance_id,status,copy_result)
+
                     pool.apply_async(abortable_func ,
                                      args=( instance_id,status,copy_result,),
                                      callback=process_results)
+
                     time.sleep(0.200)
-    #if the status is Not Build, delete 
             except KeyboardInterrupt:
                 userInterrupted=True
                 print "*******************************"
@@ -314,23 +314,18 @@ class DeployInstances():
                 print "Exiting........"
                 time.sleep(5)
                 pool.close()
-                #pool.terminate()
                 print "pool terminated... waiting to join"
                 pool.join()
             except Exception as err:
-                #print "Exception occured %s",err
                 result["error_state"]=err
                 self.results.append(result)
-     #print_result(results)
-     #Delete instance and print
-     #result=delete_instance(nova,instance_id)
-     #results.append(result)
+          #End while loop 
+
           if userInterrupted==False:
              time.sleep(5)
              pool.close()
              pool.join() 
           print "\nFinally, here are the results:"
-          #print results
           print "spawned instances"
           for i in self.spawned_instances:
             print i
@@ -345,25 +340,26 @@ class DeployInstances():
               print delete_results
               self.print_result(delete_results)
 
-
-
+     
+     #get fault in message
      def get_fault(self,fault):
         if fault:
            return fault["message"]
-
+     #get timings details
      def getTimings(self,timings):
          return_timings={}
          for data in timings:
              return_timings[data[0][:6]]={"Diff":data[2]-data[1]}
          return return_timings
-   
+     
+     #initialize result dict
      def initResult(self):
            return {"id":'',"name":'',
                    "action":'',"status":'',"time":'',
                    "error_state":'',"invoked_time":'',
                    "fault":'',"status_time_diff":0}
-
-
+    
+     #print pretty table when the job is done
      def print_result(self,results):
          print "Printing results"
          print results
@@ -395,8 +391,9 @@ class DeployInstances():
 if __name__ == '__main__':
       deploy=DeployInstances() 
       #999 for unlimited
+      no_of_instances=10
       deploy.init() 
-      deploy.nova_deploy_instance(5,False)
+      deploy.nova_deploy_instance(no_of_instances,False)
 
 
 
