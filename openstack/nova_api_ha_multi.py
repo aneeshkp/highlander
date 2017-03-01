@@ -1,3 +1,18 @@
+# Copyright 2015 - Aputtur, Inc.
+#
+#
+#    Licensed under the Apache License, Version 2.0 (the "License");
+#    you may not use this file except in compliance with the License.
+#    You may obtain a copy of the License at
+#
+#        http://www.apache.org/licenses/LICENSE-2.0
+#
+#    Unless required by applicable law or agreed to in writing, software
+#    distributed under the License is distributed on an "AS IS" BASIS,
+#    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#    See the License for the specific language governing permissions and
+#    limitations under the License.
+
 #!/usr/bin/enlockv python
 import os
 import requests
@@ -114,7 +129,9 @@ def checkstatus( instance_id,status,result):
     while status=='BUILD':
       try:
         if nova==None:
-            nova =getNova()
+           nova =getNova()
+           time.sleep(1)
+           continue
         nova.reset_timings()
         instance = nova.servers.get(instance_id)
         if instance.status!=status:
@@ -125,14 +142,15 @@ def checkstatus( instance_id,status,result):
             if hasattr(instance,"fault"):
                 status_result["fault"]=get_fault(instance.fault)
             status_result["time"] =  getTimings(nova.get_timings())
+            status_result["error_state"]=""
       except Exception as err:
-        print "Exception occured inside check status"
+        print "Exception occured inside check statu ... continue"
         #if isinstance(err,novaclient.exceptions.ClientException):
         #   print "It's NovaClient Exception ... reseting"
         nova =None
-       
-        status_result["error_state"]=err
-        status='ERROR'
+        status_result["error_state"]= "ERROR"
+        #status='ERROR'
+         
     status_result["status_time_diff"]=(time.time() * 1000) - start_time
     status_results.append(status_result)
     print "Complete checking status for "+instance_id
@@ -193,9 +211,8 @@ def abortable_worker(func,*args,**kwargs):
   try:
      out =res.get(timeout) #wait for function to complete
      return out   
-  except (mp.TimeoutError,Exception) as e:
+  except mp.TimeoutError as e:
      print "Timeout"
-     print e
      timeout_result["id"]=instance_id
      timeout_result["name"]=instance_name
      timeout_result["action"]="GET_STATUS"
