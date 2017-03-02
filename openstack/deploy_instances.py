@@ -14,6 +14,7 @@
 #    limitations under the License.
 
 #!/usr/bin/enlockv python
+from termcolor import colored
 import os
 import requests
 import multiprocessing as mp
@@ -50,7 +51,7 @@ def initResult():
         return {"id":'',"name":'',
                         "action":'',"status":'',"time":'',
                          "error_state":'',"invoked_time":'',
-                          "fault":'',"status_time_diff":0}
+                "fault":'',"status_time_diff":0,"error_start":'',"error_end":'','error_dif':0}
 
 
 #Wrapper for check status to monitor timeout 
@@ -89,6 +90,7 @@ def checkstatus(instance_id,status,result):
     print "Checking status for "+instance_id
     #time.sleep(1)
     status_result=deployService.initResult()
+    error_start_time=0
     # Retrieve the instance again so the status field updates
     while status=='BUILD':
       try:
@@ -109,11 +111,18 @@ def checkstatus(instance_id,status,result):
              status_result["time"] =  deployService.getTimings(nova.get_timings())
              status_result["error_state"]=""
       except Exception as err:
-        print "Exception occured inside check status... continue to check again"
-        print err
-        nova =None
-        status_result["error_state"]= "ERROR"
-      #end except
+          if  error_start_time==0: 
+              error_start_time=time.time() * 1000
+              status_result["error_start"]=str(datetime.datetime.now())
+
+          status_result["error_end"]=str(datetime.datetime.now())
+          status_result["error_diff"]=(time.time()*1000)- error_start_time
+          print colored(str(datetime.datetime.now()),'red')
+          #print "\n*****************************"
+          print err
+          nova =None
+          status_result["error_state"]= "ERROR"
+
     status_result["status_time_diff"]=(time.time() * 1000) - start_time
     status_results.append(status_result)
     print "Complete checking status for "+instance_id
@@ -252,11 +261,17 @@ class DeployInstances():
 
           pool=mp.Pool(processes=10, initializer=self.init_worker,initargs=())
           print "Starting to deploy instance"
+          error_start_time='' 
+          error_end_time=''
+          error_start_time_in_ms=0
+          error_end_time_in_ms=0
           while instance_count<=no_of_instance:
             try:
                # Starting nova instance
                 instance_results=[]
                 result=self.initResult()
+                result["error_start"]=error_start_time
+                result["error_end"]=error_end_time
                 nova.reset_timings()     
                 result["action"]="Create"
                 result["invoked_time"]=str(datetime.datetime.now())
@@ -264,16 +279,30 @@ class DeployInstances():
                 print "Starting to deploy "+ deployed_instance_name
                 start_time=time.time() * 1000
                 instance=None
+                result["error_diff"]=error_end_time_in_ms-error_start_time_in_ms
+              
                 try:
                    instance = nova.servers.create(
                                                 name=deployed_instance_name,
                                                 image=self._image, flavor=self._flavor,nics=self._nics
                                                 )
+                   error_start_time=''
+                   error_end_time=''
+                   error_end_time_in_ms=0
+                   error_start_time_in_ms=0
+
                 except KeyboardInterrupt:
                    raise KeyboardInterrupt()
                 except Exception as Err:
-                   print "\nException occured while deploying instance... looping back",Err
-                   print str(datetime.date.now())
+                   if error_start_time=='':
+                       error_start_time_in_ms=time.time() * 1000
+                       error_start_time=str(datetime.datetime.now())
+
+                   error_end_time=str(datetime.datetime.now())    
+                   error_end_time_in_ms=time.time()*100
+                   print "\n************************************************"
+                   print colored(str(datetime.date.now()),'red')
+                   print "\n Exception occured while deploying instance... looping back"
                    print "\n-----------------------------------------------------\n"
                    continue
 
@@ -308,7 +337,7 @@ class DeployInstances():
             except KeyboardInterrupt:
                 userInterrupted=True
                 print "*******************************"
-                print "You EVIL bastard!"
+                print colored("You EVIL bastard!",'red')
                 print "*******************************"   
                 instance_count =no_of_instance+1
                 print "Exiting........"
@@ -357,31 +386,34 @@ class DeployInstances():
            return {"id":'',"name":'',
                    "action":'',"status":'',"time":'',
                    "error_state":'',"invoked_time":'',
-                   "fault":'',"status_time_diff":0}
+                   "fault":'',"status_time_diff":0,"error_start":'',"error_end":'','error_diff':0}
     
      #print pretty table when the job is done
      def print_result(self,results):
          print "Printing results"
          print results
          table = PrettyTable(['id','name','action',
-                              'status','time','error_state',
-                              'Invoked_time','fault','status_time_diff'],
+                              'status','time',
+                              'Invoked_time','status_time_diff',"error_start","error_end",'error_diff'],
                                encoding="UTF-8")
          if any(isinstance(i, list) for i in results)==False:
              for result in results:
-                   table.add_row([result['id'],result['name'],
+                 table.add_row([result['id'][:6],result['name'],
                                   result["action"],result["status"],
                                   result['time'], 
-                                  result["error_state"],result['invoked_time'],
-                                  result['fault'],result['status_time_diff']])
+                                  result['invoked_time'],
+                                  result['status_time_diff'],
+                                  result['error_start'],result['error_end'],result['error_dif']])
          else:
              for result_1 in results:
                 for result in result_1:
                    try:
-                     table.add_row([result['id'],result['name'],
+                     
+                     table.add_row([result['id'][:6],result['name'],
                                         result["action"],result["status"],
-                                      result['time'], result["error_state"],
-                                      result['invoked_time'],result['fault'],result['status_time_diff']])
+                                      result['time'],
+                                      result['invoked_time'],result['status_time_diff'],
+                                   result['error_start'],result['error_end'],result["error_diff"]])
                    except:
                     print "failed table"
                     print result_1
