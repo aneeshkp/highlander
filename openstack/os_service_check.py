@@ -30,6 +30,7 @@ def check_keystone():
     INITIAL_STATUS = "UNKNOWN"
     allowed_values={'identity':'tenants','volume':'types','volumev2':'backups/detail','volumev3':'backups/detail','image':'v2/images','glance':'','compute':'servers','neutron':'','network':'v2.0/networks','orchestration': 'stacks'}
 
+
     internal_url={}
     service_url={}
     service_types=[]
