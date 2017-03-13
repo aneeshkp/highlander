@@ -75,10 +75,10 @@ def check_keystone():
     try:
        status_changed=True
        while True:
-            table = PrettyTable(['Service', 'staus','e-time','reason','last_s_time','current_time','status_diff(in ms)','last_status','url'])
+            table = PrettyTable(['Service', 'staus','e-time','reason','last_s_time','current_time','status_diff(in ms)','last_status'])
        	    for service_type in service_types:
                 result={} 
-                current_time=time.time() * 1000
+                service_current_time=time.time() * 1000
        	        with eventlet.Timeout(1):                   
                      try:  
         	       response= requests.get(service_url[service_type]["clean_url"],headers=headers,timeout=connection_timeout, verify=False )
@@ -86,12 +86,14 @@ def check_keystone():
                        response = Response()
                        response.status_code=501
                        response.reason="Connection Error" 
-                       result["elapsed_time"]=(time.time() * 1000)- current_time
+                       result["elapsed_time"]=(time.time() * 1000)- service_current_time
 
            
  
                 if service_status[service_type]!=response.status_code:
-                   current_time=time.time() * 1000
+                   d=datetime.datetime.now()
+                   current_time=(time.mktime(d.timetuple()))*1000
+                   current_date=str(d)
                    service_status[service_type]=response.status_code
                    if response.status_code==300:
                       service_url[service_type]["clean_url"]= process_multiplechoice(response.content)
@@ -101,23 +103,28 @@ def check_keystone():
                    if response.status_code!=501: 
                       result["elapsed_time"]=response.elapsed.total_seconds()
                    result["reason"]=response.reason
-                   result["current_time"]=str(datetime.datetime.now())
-                   result["last_time_in_ms"]=last_time=time.time() * 1000
+                   result["current_time"]=current_date
+                   result["current_time_in_ms"]=current_time 
+                   #last status time 
                    #print response.headers
                    if not results[service_type]:
-                       result["last_success_time"]=str(datetime.datetime.now()) 
+                       result["last_success_time"]=current_date 
+                       result["last_status_time"]=current_date
+                       result["last_time_in_ms"]=current_time
                        result["last_status"]=INITIAL_STATUS
                        result["diff"]=0.00 
                    else:
-                       result["last_success_time"]=results[service_type]["last_success_time"]
-                       result["last_status"]=results[service_type]["status"]
-                       result["diff"]=current_time - results[service_type]["last_time_in_ms"]
+	               result["last_success_time"]=results[service_type]["last_success_time"]
+                       result["last_status_time"]=results[service_type]["current_time"]
+                       result["last_time_in_ms"]=results[service_type]["current_time_in_ms"]
+        	       result["last_status"]=results[service_type]["status"]
+                       result["diff"]=(current_time - results[service_type]["current_time_in_ms"]) 
                    result["url"]=response.url
-                   table.add_row([result["service_name"],result["status"], result["elapsed_time"],result["reason"],result["last_success_time"],result["current_time"],result["diff"],result["last_status"],result['url']])
+                   table.add_row([result["service_name"],result["status"], result["elapsed_time"],result["reason"],result["last_status_time"],result["current_time"],result["diff"],result["last_status"]])
                    results[service_type]=result
                 else:
                    result=results[service_type]
-                   table.add_row([result["service_name"],result["status"], result["elapsed_time"],result["reason"],result["last_success_time"],result["current_time"],result["diff"],result["last_status"],result['url']])
+                   table.add_row([result["service_name"],result["status"], result["elapsed_time"],result["reason"],result["last_status_time"],result["current_time"],result["diff"],result["last_status"]])
                     
 
             if status_changed:
